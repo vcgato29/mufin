@@ -1,0 +1,71 @@
+#!/usr/bin/env ruby
+
+require 'thor'
+require 'pathname'
+require 'shellwords'
+
+MUFIN = (Pathname.new __FILE__).realpath.dirname.dirname
+
+# We have to compile / patch external libraries right in the scripts,
+# as <foo> does not support library loading.
+module Patch
+  def funcmay
+    Dir['/usr/share/lua/*/funcmay/*.lua'].inject 'funcmay = {}' do |content, file|
+      content + "\n" + File.read(file)
+    end
+  end
+end
+
+class Mufin < Thor
+  include Patch
+  desc 'compile', 'compile'
+  option :output
+  def compile *tokens
+    output = ! options[:output] ? nil : (Pathname.new options[:output])
+    mufin = Dir["#{MUFIN}/lib/*.moon"].inject '' do |content, file|
+      content + "\n" + File.read(file)
+    end
+    mufin = `echo #{mufin.shellescape} | moonc --`
+
+    if tokens.empty?
+      tokens.push '.'
+    end
+
+    if not STDIN.tty?
+      return puts funcmay, mufin, `moonc --`
+    end
+
+    paths = tokens.map { |token| Pathname.new token }
+    # Simplify logic
+    # by reducing to files
+    files = paths.inject [] do |files, path|
+      files +
+      if path.file?
+        [path: path]
+      elsif path.directory?
+        Dir[path + '**/**.moon'].map { |file| Pathname.new file }.select(&:file?).map do |file|
+          install = file.dirname.to_s.gsub (Regexp.new ('^' + (Regexp.escape path.to_s) + '/?')), ''
+          { path: file, install: install }
+        end
+      else
+        []
+      end
+    end
+    files.each do |file|
+      path = file[:path]
+      script = `echo #{path.read.shellescape} | moonc --`
+      script_path = if not output
+        Pathname.new ((path.dirname + (path.basename '.moon')).to_s + '.lua')
+      elsif output.file?
+        output
+      elsif output.directory? or not output.exist?
+        Pathname.new (output + file[:install] + (path.basename '.moon')).to_s + '.lua'
+      end
+      system "mkdir --parents #{script_path.dirname.to_s.shellescape}"
+      script_path.write [funcmay, mufin, script].join "\n"
+      puts "#{path} → #{script_path}"
+    end
+  end
+end
+
+Mufin.start ARGV

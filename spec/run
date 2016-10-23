@@ -1,0 +1,11 @@
+#!/bin/sh
+
+mufin=$(dirname $(dirname $(realpath $0)))
+
+export LUA_PATH=$mufin/lib/'?'.lua';;'
+
+moonc $mufin/lib/mufin.moon
+
+busted --verbose $mufin
+
+rm $mufin/lib/mufin.lua
